@@ -268,11 +268,13 @@ result
 # =============================================================================
 
 def add_nodal_force(config, mechanical):
-    """
-    Apply a harmonic force directly on a named selection of nodes (Y-direction).
-    """
-    F_amp = float(config.get("force_value_N", 1.0))
-    ns_name = config.get("remote_named_selection", "FORCE_NODE")
+    F_amp     = float(config.get("force_value_N", 1.0))
+    direction = config.get("force_direction", "Y").upper()
+    ns_name   = config.get("remote_named_selection", "FORCE_NODE")
+
+    fx = F_amp if direction == "X" else 0.0
+    fy = F_amp if direction == "Y" else 0.0
+    fz = F_amp if direction == "Z" else 0.0
 
     script = f"""
 model = Model
@@ -290,11 +292,11 @@ if ns is None:
 
 force = harmonic.AddNodalForce()
 force.Location = ns
-force.XComponent.Output.DiscreteValues = [Quantity("0 [N]")]
-force.YComponent.Output.DiscreteValues = [Quantity("{F_amp} [N]")]
-force.ZComponent.Output.DiscreteValues = [Quantity("0 [N]")]
+force.XComponent.Output.DiscreteValues = [Quantity("{fx} [N]")]
+force.YComponent.Output.DiscreteValues = [Quantity("{fy} [N]")]
+force.ZComponent.Output.DiscreteValues = [Quantity("{fz} [N]")]
 
-result = "OK: nodal force {F_amp} N (Y-direction) applied to NS '{ns_name}'"
+result = "OK: nodal force {F_amp} N ({direction}-direction) applied to NS '{ns_name}'"
 result
 """
     out = mechanical.run_python_script(script)
@@ -1043,10 +1045,10 @@ import json
 mesh_data = Model.Analyses[0].MeshData
 all_nodes = mesh_data.Nodes
 
-max_y = max(n.Y for n in all_nodes)
-tolerance = 1e-6
+max_z = max(n.Z for n in all_nodes)
+tolerance = 1e-4
 
-top_nodes = [n.Id for n in all_nodes if abs(n.Y - max_y) < tolerance]
+top_nodes = [n.Id for n in all_nodes if abs(n.Z - max_z) < tolerance]
 
 result = json.dumps(top_nodes)
 result
@@ -1054,7 +1056,7 @@ result
     out = mechanical.run_python_script(script)
     import json
     node_ids = json.loads(out)
-    print(f"Found {len(node_ids)} nodes on top face")
+    print(f"Found {len(node_ids)} nodes on top face (max Z)")
     return node_ids
 
 # =============================================================================
@@ -1080,9 +1082,10 @@ selection_manager.ClearSelection()
 selection_manager.NewSelection(sel_info)
 
 ns_container = model.NamedSelections
-for ns in list(ns_container.Children):
-    if ns.Name == "{ns_name}":
-        ns.Delete()
+if ns_container is not None:
+    for ns in list(ns_container.Children):
+        if ns.Name == "{ns_name}":
+            ns.Delete()
 
 ns = model.AddNamedSelection()
 ns.Name = "{ns_name}"
@@ -1100,31 +1103,33 @@ def run_modal_analysis(config, mechanical):
     Run a modal analysis, print the natural frequencies, and save them to
     modal_frequencies.json in the output directory so plot_frf.py can read them.
     """
-    script = """
+    min_freq   = float(config.get("modal_min_freq_hz", 1.0))
+    max_modes  = int(config.get("modal_max_modes", 10))
+
+    script = f"""
 import json
 from Ansys.Mechanical.DataModel.Enums import DataModelObjectCategory
 
 model = Model
 
-# Add modal analysis
+# Add modal analysis — extra 6 modes to skip free-free rigid body modes
 modal = model.AddModalAnalysis()
 settings = modal.AnalysisSettings
-settings.MaximumModesToFind = 10
+settings.MaximumModesToFind = {max_modes} + 6
 
 modal.Activate()
 
-# Apply fixed support from existing named selection
+# Apply fixed support if NS_SUPPORT_FACE exists; skip for free-free
 ns = None
-for n in model.NamedSelections.Children:
-    if n.Name == "NS_SUPPORT_FACE":
-        ns = n
-        break
+if model.NamedSelections is not None:
+    for n in model.NamedSelections.Children:
+        if n.Name == "NS_SUPPORT_FACE":
+            ns = n
+            break
 
-if ns is None:
-    raise RuntimeError("NS_SUPPORT_FACE not found - run fixed support setup first")
-
-fixed = modal.AddFixedSupport()
-fixed.Location = ns
+if ns is not None:
+    fixed = modal.AddFixedSupport()
+    fixed.Location = ns
 
 # Add a TotalDeformation result for each mode so frequencies are accessible
 for mode in range(1, settings.MaximumModesToFind + 1):
@@ -1146,7 +1151,7 @@ for i in range(freq_results.Count):
     freq_values.append(freq)
     lines.append("Mode " + str(i+1) + ": " + str(freq) + " Hz")
 
-result = json.dumps({"frequencies_hz": freq_values, "lines": lines})
+result = json.dumps({{"frequencies_hz": freq_values, "lines": lines}})
 result
 """
     out = mechanical.run_python_script(script)
@@ -1156,12 +1161,198 @@ result
     for line in data["lines"]:
         print(" ", line)
 
-    # Save frequencies to JSON for use by plot_frf.py
     import json, os
+    min_freq = float(config.get("modal_min_freq_hz", 1.0))
+    structural = [f for f in data["frequencies_hz"] if f >= min_freq]
     json_path = os.path.join(config["output_dir"], "modal_frequencies.json")
     with open(json_path, "w") as f:
-        json.dump({"frequencies_hz": data["frequencies_hz"]}, f, indent=4)
+        json.dump({"frequencies_hz": structural}, f, indent=4)
+    print(f"Structural modes saved: {[round(f,2) for f in structural]}")
     print(f"Modal frequencies saved to {json_path}")
+
+# =============================================================================
+#
+# =============================================================================
+
+def setup_material(config, mechanical):
+    """
+    Create a custom material from config properties, import it into Mechanical,
+    and assign it to all bodies. Uses the Structural Steel XML as a template.
+    """
+    import os
+    import xml.etree.ElementTree as ET
+
+    E       = float(config.get("material_E_Pa",          2.35e9))
+    nu      = float(config.get("material_nu",            0.3))
+    rho     = float(config.get("material_density_kgm3",  1220.0))
+    mat_name = config.get("material_name", "Resin")
+    out_dir  = config.get("output_dir", r"C:\Users\coetech\Documents\PyMechanical\Outputs")
+
+    K = E / (3.0 * (1.0 - 2.0 * nu))
+    G = E / (2.0 * (1.0 + nu))
+
+    lib_path = r"C:\Program Files\ANSYS Inc\v252\Addins\EngineeringData\Samples\General_Materials.xml"
+    lib_tree = ET.parse(lib_path)
+    lib_root = lib_tree.getroot()
+    matml_doc = lib_root.find(".//MatML_Doc")
+
+    ss_material = None
+    for mat_elem in matml_doc.findall("Material"):
+        name_elem = mat_elem.find("BulkDetails/Name")
+        if name_elem is not None and name_elem.text == "Structural Steel":
+            ss_material = mat_elem
+            break
+    if ss_material is None:
+        raise RuntimeError("Structural Steel not found in General_Materials.xml")
+
+    ss_material.find("BulkDetails/Name").text = mat_name
+
+    for prop in ss_material.findall("BulkDetails/PropertyData"):
+        for pv in prop.findall("ParameterValue"):
+            pid  = pv.get("parameter")
+            data = pv.find("Data")
+            if data is None:
+                continue
+            if pid == "pa6":   data.text = str(rho)
+            elif pid == "pa19": data.text = str(E)
+            elif pid == "pa20": data.text = str(nu)
+            elif pid == "pa21": data.text = str(K)
+            elif pid == "pa22": data.text = str(G)
+
+    new_root = ET.Element("EngineeringData")
+    new_root.set("version",     lib_root.get("version",     "19.4.0.79"))
+    new_root.set("versiondate", lib_root.get("versiondate", "6/9/2017 12:12:00 PM"))
+    ET.SubElement(new_root, "Notes").text = "\n  "
+    materials_elem = ET.SubElement(new_root, "Materials")
+    new_matml = ET.SubElement(materials_elem, "MatML_Doc")
+    new_matml.append(ss_material)
+    metadata = matml_doc.find("Metadata")
+    if metadata is not None:
+        new_matml.append(metadata)
+
+    ET.indent(new_root, space="  ")
+    xml_path = os.path.join(out_dir, f"{mat_name}.xml")
+    ET.ElementTree(new_root).write(xml_path, encoding="unicode", xml_declaration=True)
+    print(f"Material XML written: {mat_name}, E={E:.3e} Pa, nu={nu}, rho={rho} kg/m³")
+
+    script = f"""
+from Ansys.Mechanical.DataModel.Enums import DataModelObjectCategory
+from Ansys.ACT.Interfaces.Common import SelectionTypeEnum
+
+Model.Materials.Import(r"{xml_path}")
+
+# Get geometry entity IDs of all bodies
+body_ids = []
+for assembly in ExtAPI.DataModel.GeoData.Assemblies:
+    for part in assembly.AllParts:
+        for body in part.Bodies:
+            body_ids.append(body.Id)
+
+# Remove existing assignment if present
+for ma in list(Model.Materials.GetChildren(DataModelObjectCategory.MaterialAssignment, True)):
+    if ma.Name == "{mat_name}Assignment":
+        ma.Delete()
+
+selection = ExtAPI.SelectionManager.CreateSelectionInfo(SelectionTypeEnum.GeometryEntities)
+selection.Ids = body_ids
+
+ma = Model.Materials.AddMaterialAssignment()
+ma.Name = "{mat_name}Assignment"
+ma.Location = selection
+ma.Material = "{mat_name}"
+
+result = "OK: {mat_name} assigned to body IDs " + str(body_ids)
+result
+"""
+    out = mechanical.run_python_script(script)
+    print("Mechanical says (material setup):", out)
+
+# =============================================================================
+#
+# =============================================================================
+
+def add_remote_force(config, mechanical):
+    """
+    Select the top face (max centroid Z), create NS_TOP_FACE, and apply a
+    remote force at the coordinates specified in config.
+    If force_x_m / force_y_m / force_z_m are not set, defaults to the
+    centroid of the top face. Corner coordinates are printed so you can
+    copy them into config.
+    """
+    import json
+
+    F_amp     = float(config.get("force_value_N", 1.0))
+    direction = config.get("force_direction", "Z").upper()
+    fx = F_amp if direction == "X" else 0.0
+    fy = F_amp if direction == "Y" else 0.0
+    fz = F_amp if direction == "Z" else 0.0
+
+    face_id = config.get("force_face_id", None)
+
+    # Step 1: create NS_TOP_FACE from the geometry entity ID
+    face_script = f"""
+import json
+from Ansys.ACT.Interfaces.Common import SelectionTypeEnum
+
+model = Model
+
+ns_container = model.NamedSelections
+if ns_container is not None:
+    for ns in list(ns_container.Children):
+        if ns.Name == "NS_TOP_FACE":
+            ns.Delete()
+
+selection = ExtAPI.SelectionManager.CreateSelectionInfo(SelectionTypeEnum.GeometryEntities)
+selection.Ids = [{face_id}]
+
+ns = model.AddNamedSelection()
+ns.Name = "NS_TOP_FACE"
+ns.Location = selection
+
+result = json.dumps({{"ok": True}})
+result
+"""
+    out = mechanical.run_python_script(face_script)
+    info = json.loads(out)
+    if "error" in info:
+        raise RuntimeError(info["error"])
+    print("Mechanical says (NS_TOP_FACE): created from face ID", face_id)
+
+    loc_x = float(config["force_x_m"])
+    loc_y = float(config["force_y_m"])
+    loc_z = float(config["force_z_m"])
+    print(f"Applying remote force at: ({loc_x:.4f}, {loc_y:.4f}, {loc_z:.4f}) m")
+
+    # Step 2: apply remote force
+    force_script = f"""
+model = Model
+harmonic = model.Analyses[0]
+harmonic.Activate()
+
+ns = None
+for child in model.NamedSelections.Children:
+    if child.Name == "NS_TOP_FACE":
+        ns = child
+        break
+
+if ns is None:
+    raise RuntimeError("NS_TOP_FACE not found")
+
+rf = harmonic.AddRemoteForce()
+rf.Location = ns
+rf.DefineBy = LoadDefineBy.Components
+rf.XComponent.Output.DiscreteValues = [Quantity("{fx} [N]")]
+rf.YComponent.Output.DiscreteValues = [Quantity("{fy} [N]")]
+rf.ZComponent.Output.DiscreteValues = [Quantity("{fz} [N]")]
+rf.XCoordinate = Quantity("{loc_x} [m]")
+rf.YCoordinate = Quantity("{loc_y} [m]")
+rf.ZCoordinate = Quantity("{loc_z} [m]")
+
+result = "OK: remote force ({fx}, {fy}, {fz}) N at ({loc_x}, {loc_y}, {loc_z}) m on NS_TOP_FACE"
+result
+"""
+    out = mechanical.run_python_script(force_script)
+    print("Mechanical says (remote force):", out)
 
 # =============================================================================
 # Damage simulation helpers

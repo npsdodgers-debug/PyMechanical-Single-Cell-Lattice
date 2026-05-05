@@ -1,6 +1,5 @@
 from ansys.mechanical.core import launch_mechanical
 import os, shutil, textwrap
-import json
 
 from Harmonic_Subfunctions import (
     setup_session_and_model,
@@ -9,9 +8,8 @@ from Harmonic_Subfunctions import (
     check_model_info,
     export_geometry_image,
     setup_harmonic_analysis,
-    add_fixed_on_support_face,
-    add_nodal_force,
-    select_face_by_centroid_generic,
+    setup_material,
+    add_remote_force,
     export_bc_view,
     solve_model,
     print_solve_output,
@@ -19,8 +17,6 @@ from Harmonic_Subfunctions import (
     close_mechanical,
     export_centerline_displacement,
     export_aggregate_frf,
-    get_top_face_nodes,
-    select_node_by_id,
     run_modal_analysis,
     add_apdl_imaginary_export,
     export_real_displacement,
@@ -30,19 +26,35 @@ from Harmonic_Subfunctions import (
 if __name__ == "__main__":
     config = {
         # ── Geometry ──────────────────────────────────────────────────────────
-        "geometry_path": r"C:\Users\coetech\OneDrive - Texas A&M University\Research\PyMechanical\Thin_beam\Thin_Beam.SLDPRT",
+        "geometry_path": r"C:\Users\coetech\OneDrive - Texas A&M University\Research\PyMechanical\PyMechanical-Single-Cell-Lattice\Single_Cell_30mm.stp",
 
         # ── Mesh ──────────────────────────────────────────────────────────────
-        "element_size": 1.6e-3,          # meters
+        "element_size": 5e-3,          # meters
+
+        # ── Modal analysis ────────────────────────────────────────────────────
+        "modal_min_freq_hz": 1.0,
+        "modal_max_modes":   10,
 
         # ── Harmonic analysis ─────────────────────────────────────────────────
         "f_start_hz": 10.0,
-        "f_end_hz":   5000.0,
-        "n_points":   150,
+        "f_end_hz":   1000.0,
+        "n_points":   50,
+
+        # ── Material ──────────────────────────────────────────────────────────
+        "material_name":           "Resin",
+        "material_E_Pa":           2.35e9,
+        "material_nu":             0.3,
+        "material_density_kgm3":   1220.0,
 
         # ── Force ─────────────────────────────────────────────────────────────
-        "force_value_N":           1.0,  # amplitude, Y-direction
-        "remote_named_selection":  "FORCE_NODE",
+        "force_face_id":           744,                        # geometry entity ID of middle unit face
+        "force_value_N":           -1.0,
+        "force_direction":         "Z",   # X, Y, or Z
+        # Remote force location — defaults to top face centroid if not set.
+        # Run once to see corner coordinates printed, then uncomment to target a corner:
+         "force_x_m": 0.01,
+         "force_y_m": -0.01,
+         "force_z_m": 0.0315,
         
 
         # ── GUI ───────────────────────────────────────────────────────────────
@@ -63,83 +75,20 @@ if __name__ == "__main__":
 
     # ── Setup (runs once) ─────────────────────────────────────────────────────
     mech = setup_session_and_model(config)
+    setup_material(config, mech)
     check_body_material(config, mech)
     setup_harmonic_analysis(config, mech)
     setup_mesh(config, mech)
     check_model_info(config, mech)
     export_geometry_image(config, mech)
 
-    # ── Fixed support: select all nodes at z=0 ────────────────────────────────
-    fix_support_script = """
-import json
-mesh_data = Model.Analyses[0].MeshData
-all_nodes = mesh_data.Nodes
-min_z = min(n.Z for n in all_nodes)
-support_node_ids = [n.Id for n in all_nodes if abs(n.Z - min_z) < 1e-6]
-result = json.dumps(support_node_ids)
-result
-"""
-    out = mech.run_python_script(fix_support_script)
-    support_node_ids = json.loads(out)
-    print(f"Found {len(support_node_ids)} nodes on support face (z=0)")
-
-    create_support_ns_script = f"""
-from Ansys.ACT.Interfaces.Common import SelectionTypeEnum
-model = Model
-mesh_data = model.Analyses[0].MeshData
-selection_manager = ExtAPI.SelectionManager
-sel_info = selection_manager.CreateSelectionInfo(SelectionTypeEnum.MeshNodes)
-sel_info.Ids = {support_node_ids}
-selection_manager.ClearSelection()
-selection_manager.NewSelection(sel_info)
-
-# Create NamedSelections branch if it doesn't exist
-ns_container = model.NamedSelections
-if ns_container is None:
-    dummy = model.AddNamedSelection()
-    dummy.Delete()
-    ns_container = model.NamedSelections
-
-# Delete existing NS with same name if present
-for ns in list(ns_container.Children):
-    if ns.Name == "NS_SUPPORT_FACE":
-        ns.Delete()
-
-ns = model.AddNamedSelection()
-ns.Name = "NS_SUPPORT_FACE"
-ns.Location = sel_info
-ns.Generate()
-result = "OK: NS_SUPPORT_FACE created with " + str(len(support_node_ids)) + " nodes"
-result
-"""
-    out = mech.run_python_script(create_support_ns_script)
-    print("Mechanical says (support NS):", out)
-    add_fixed_on_support_face(config, mech)
+    # ── Free-free: no fixed support applied ──────────────────────────────────
 
     # ── Modal analysis to find natural frequencies ────────────────────────────
     run_modal_analysis(config, mech)
 
-    # ── Pick the tip node on the top face (max Z) ─────────────────────────────
-    top_nodes = get_top_face_nodes(mech)
-
-    find_tip_script = f"""
-import json
-mesh_data = Model.Analyses[0].MeshData
-node_ids = {top_nodes}
-tip_node_id = max(node_ids, key=lambda nid: mesh_data.NodeById(nid).Z)
-tip_node = mesh_data.NodeById(tip_node_id)
-result = json.dumps({{"id": tip_node_id, "x": tip_node.X, "y": tip_node.Y, "z": tip_node.Z}})
-result
-"""
-    out = mech.run_python_script(find_tip_script)
-    tip_info = json.loads(out)
-    tip_node_id = tip_info["id"]
-    print(f"Tip node selected: ID={tip_node_id}, X={tip_info['x']:.6f}, Y={tip_info['y']:.6f}, Z={tip_info['z']:.6f} m")
-
-
-    # ── Apply force at tip node ───────────────────────────────────────────────
-    select_node_by_id(mech, tip_node_id, "FORCE_NODE")
-    add_nodal_force(config, mech)
+    # ── Apply remote force on top face ────────────────────────────────────────
+    add_remote_force(config, mech)
     export_bc_view(config, mech)
 
     # ── Solve and export ──────────────────────────────────────────────────────
