@@ -15,8 +15,6 @@ from Harmonic_Subfunctions import (
     print_solve_output,
     save_project,
     close_mechanical,
-    export_centerline_displacement,
-    export_aggregate_frf,
     run_modal_analysis,
     add_apdl_imaginary_export,
     export_real_displacement,
@@ -36,9 +34,9 @@ if __name__ == "__main__":
         "modal_max_modes":   10,
 
         # ── Harmonic analysis ─────────────────────────────────────────────────
-        "f_start_hz": 10.0,
-        "f_end_hz":   1000.0,
-        "n_points":   50,
+        "f_start_hz": 500.0,
+        "f_end_hz":   3500.0,
+        "n_points":   200,
 
         # ── Material ──────────────────────────────────────────────────────────
         "material_name":           "Resin",
@@ -61,15 +59,13 @@ if __name__ == "__main__":
         "show_gui": True,                # set to False to run headless
 
         # ── Output ────────────────────────────────────────────────────────────
-        "output_dir":    r"C:\Users\coetech\Documents\PyMechanical\Outputs",
+        "output_dir":    r"C:\Users\coetech\Documents\PyMechanical\Single Cell Lattice",
         "project_name":  "cantilever_harmonic",
         "image_name":    "meshed_beam.png",
         "bc_image_name": "bc_view.png",
-        "csv_name":              "nodal_displacement_complex.csv",
-        "centerline_csv_name":   "nodal_displacement_centerline.csv",
-        "aggregate_csv_name":    "frf_aggregate.csv",
-        "imag_csv_name":         "healthy_imag_apdl",
-        "real_csv_name":         "healthy_displacement_real.csv",
+        "csv_name":      "nodal_displacement_complex.csv",
+        "imag_csv_name": "healthy_imag_apdl",
+        "real_csv_name": "healthy_displacement_real.csv",
 
     }
 
@@ -94,10 +90,8 @@ if __name__ == "__main__":
     # ── Solve and export ──────────────────────────────────────────────────────
     add_apdl_imaginary_export(config, mech)         # APDL snippet for imaginary export
     solve_model(config, mech)
-    export_real_displacement(config, mech)          # real part via DPF
-    export_centerline_displacement(config, mech)    # top centerline nodes only
-    export_aggregate_frf(config, mech)              # one row per frequency
-    merge_real_imag_csv(config)                     # combine real + imaginary into complex CSV
+    export_real_displacement(config, mech)
+    merge_real_imag_csv(config)
     print_solve_output(mech)
 
     # ── Inspect in Mechanical GUI before closing ──────────────────────────────

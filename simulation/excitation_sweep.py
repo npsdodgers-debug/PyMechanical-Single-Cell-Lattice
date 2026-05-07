@@ -14,8 +14,6 @@ from Harmonic_Subfunctions import (
     solve_model,
     print_solve_output,
     close_mechanical,
-    export_centerline_displacement,
-    export_aggregate_frf,
     run_modal_analysis,
     add_apdl_imaginary_export,
     export_real_displacement,
@@ -29,10 +27,10 @@ from Harmonic_Subfunctions import (
 # Fill in corner coordinates after first run (check Mechanical coordinate readout).
 EXCITATION_LOCATIONS = [
     ("center",  0.015,  -0.015),
-    ("corner0", None,   None  ),   # update: (min_x, min_y) of top face
-    ("corner1", None,   None  ),   # update: (max_x, min_y) of top face
-    ("corner2", None,   None  ),   # update: (min_x, max_y) of top face
-    ("corner3", None,   None  ),   # update: (max_x, max_y) of top face
+    ("corner0", 0,   0  ),   # update: (min_x, min_y) of top face
+    #("corner1", None,   None  ),   # update: (max_x, min_y) of top face
+    #("corner2", None,   None  ),   # update: (min_x, max_y) of top face
+    #("corner3", None,   None  ),   # update: (max_x, max_y) of top face
 ]
 
 if __name__ == "__main__":
@@ -45,11 +43,11 @@ if __name__ == "__main__":
 
         # ── Modal analysis ────────────────────────────────────────────────────
         "modal_min_freq_hz": 1.0,
-        "modal_max_modes":   10,
+        "modal_max_modes":   20,
 
         # ── Harmonic analysis ─────────────────────────────────────────────────
-        "f_start_hz": 10.0,
-        "f_end_hz":   1000.0,
+        "f_start_hz": 500.0,
+        "f_end_hz":   3500.0,
         "n_points":   50,
 
         # ── Material ──────────────────────────────────────────────────────────
@@ -70,7 +68,7 @@ if __name__ == "__main__":
         "show_gui": True,
 
         # ── Output ────────────────────────────────────────────────────────────
-        "output_dir":    r"C:\Users\coetech\Documents\PyMechanical\Outputs",
+        "output_dir":    r"C:\Users\coetech\Documents\PyMechanical\Single Cell Lattice\Sweep",
         "project_name":  "lattice_excitation_sweep",
         "image_name":    "lattice_sweep_meshed.png",
         "bc_image_name": "lattice_sweep_bc.png",
@@ -98,11 +96,9 @@ if __name__ == "__main__":
 
         # Build per-location config
         config = dict(base_config)
-        config["csv_name"]            = f"healthy_{label}_complex.csv"
-        config["centerline_csv_name"] = f"healthy_{label}_centerline.csv"
-        config["aggregate_csv_name"]  = f"healthy_{label}_aggregate.csv"
-        config["imag_csv_name"]       = f"healthy_{label}_imag_apdl"
-        config["real_csv_name"]       = f"healthy_{label}_real.csv"
+        config["csv_name"]      = f"healthy_{label}_complex.csv"
+        config["imag_csv_name"] = f"healthy_{label}_imag_apdl"
+        config["real_csv_name"] = f"healthy_{label}_real.csv"
         config["bc_image_name"]       = f"healthy_{label}_bc.png"
 
         config["force_x_m"] = fx if fx is not None else base_config["force_x_m"]
@@ -143,8 +139,6 @@ result
         add_apdl_imaginary_export(config, mech)
         solve_model(config, mech)
         export_real_displacement(config, mech)
-        export_centerline_displacement(config, mech)
-        export_aggregate_frf(config, mech)
         merge_real_imag_csv(config)
         print_solve_output(mech)
 
