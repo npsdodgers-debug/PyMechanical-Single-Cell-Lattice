@@ -1177,6 +1177,26 @@ result
 #
 # =============================================================================
 
+def _find_material_library():
+    """
+    Locate General_Materials.xml under the installed Ansys Inc directory.
+    Searches all "vNNN" version folders and returns the highest version found,
+    so this keeps working across Ansys version upgrades.
+    """
+    import glob
+
+    candidates = glob.glob(
+        r"C:\Program Files\ANSYS Inc\v*\Addins\EngineeringData\Samples\General_Materials.xml"
+    )
+    if not candidates:
+        raise FileNotFoundError(
+            "Could not find General_Materials.xml under "
+            r"C:\Program Files\ANSYS Inc\v*\Addins\EngineeringData\Samples\. "
+            "Check your Ansys installation."
+        )
+    return sorted(candidates)[-1]
+
+
 def setup_material(config, mechanical):
     """
     Create a custom material from config properties, import it into Mechanical,
@@ -1194,7 +1214,7 @@ def setup_material(config, mechanical):
     K = E / (3.0 * (1.0 - 2.0 * nu))
     G = E / (2.0 * (1.0 + nu))
 
-    lib_path = r"C:\Program Files\ANSYS Inc\v252\Addins\EngineeringData\Samples\General_Materials.xml"
+    lib_path = _find_material_library()
     lib_tree = ET.parse(lib_path)
     lib_root = lib_tree.getroot()
     matml_doc = lib_root.find(".//MatML_Doc")
@@ -1396,9 +1416,7 @@ def apply_damage_apdl(config, mechanical):
     #    official Ansys material library (guarantees correct import format) ────
     import xml.etree.ElementTree as ET
 
-    lib_path = (
-        r"C:\Program Files\ANSYS Inc\v252\Addins\EngineeringData\Samples\General_Materials.xml"
-    )
+    lib_path = _find_material_library()
     lib_tree = ET.parse(lib_path)
     lib_root = lib_tree.getroot()
     matml_doc = lib_root.find(".//MatML_Doc")
