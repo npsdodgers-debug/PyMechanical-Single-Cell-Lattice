@@ -753,9 +753,12 @@ def merge_real_imag_csv(config):
 
     rows = []
     for real_freq, imag_freq in freq_map.items():
-        r = real_df[real_df['freq_Hz'] == real_freq].set_index('node_id')
+        r  = real_df[real_df['freq_Hz'] == real_freq].set_index('node_id')
         im = imag_df[abs(imag_df['freq_Hz'] - imag_freq) < 0.01].set_index('node_id')
-        merged = r.join(im[['ux_imag','uy_imag','uz_imag']], how='inner')
+        # Use APDL x,y,z (model units = mm); DPF returns meters which breaks
+        # the driving-point node lookup in load_frf_pipeline.
+        r_vals = r.drop(columns=['x', 'y', 'z'])
+        merged = r_vals.join(im[['x', 'y', 'z', 'ux_imag', 'uy_imag', 'uz_imag']], how='inner')
         merged['freq_Hz'] = real_freq
         rows.append(merged.reset_index())
 

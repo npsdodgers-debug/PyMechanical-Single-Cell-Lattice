@@ -23,10 +23,10 @@ OUTPUT_FILE = os.path.join(SWEEP_DIR, "sweep_frf_comparison.png")
 # Force location per label in mm — add corners here as you fill them in
 FORCE_LOCATIONS = {
     "center":  (10.0,  -10.0, 31.5),
-    "corner0": (10.0,  -10.0, 31.5),  # update when corner coords are known
-    "corner1": (10.0,  -10.0, 31.5),
-    "corner2": (10.0,  -10.0, 31.5),
-    "corner3": (10.0,  -10.0, 31.5),
+    "corner(0,0)": (0.0,  0.0, 31.5),  # update when corner coords are known
+    "corner(0.03,0)": (30.0,  0.0, 31.5),  # update when corner coords are known
+    "corner(0,0.03)": (0.0,  -30.0, 31.5),  # update when corner coords are known
+    "corner(0.03,0.03)": (30.0,  -30.0, 31.5),  # update when corner coords are known
 }
 
 # ── Find all sweep CSVs ───────────────────────────────────────────────────────
@@ -90,6 +90,7 @@ axes[0].set_title("Magnitude")
 axes[0].legend(fontsize=8)
 axes[0].grid(True, which='both', alpha=0.3)
 
+axes[0].set_xlim(500, 3500)
 axes[1].set_ylim(-180, 180)
 axes[1].axhline( 90, color='gray', linewidth=0.5, linestyle=':', alpha=0.7)
 axes[1].axhline(-90, color='gray', linewidth=0.5, linestyle=':', alpha=0.7)

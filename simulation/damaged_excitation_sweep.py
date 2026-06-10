@@ -18,11 +18,7 @@ from Harmonic_Subfunctions import (
     merge_real_imag_csv,
 )
 
-# ── Excitation locations on the top face ──────────────────────────────────────
-# Each entry: (label, force_x_m, force_y_m)
-# None falls back to the centroid values set in base_config (force_x_m, force_y_m).
-# Centroid of the middle unit top face: (0.015, -0.015, 0.0315) — confirmed in Mechanical.
-# Fill in corner coordinates after first run (check Mechanical coordinate readout).
+# ── Excitation locations — must match excitation_sweep.py exactly ─────────────
 EXCITATION_LOCATIONS = [
     # Corners
     ("center",              0.015,  -0.015),
@@ -40,7 +36,7 @@ EXCITATION_LOCATIONS = [
 if __name__ == "__main__":
     base_config = {
         # ── Geometry ──────────────────────────────────────────────────────────
-        "geometry_path": r"C:\Users\coetech\OneDrive - Texas A&M University\Research\PyMechanical\PyMechanical-Single-Cell-Lattice\Single_Cell_30mm.stp",
+        "geometry_path": r"C:\Users\coetech\Documents\PyMechanical\Thin_beam\30mm Single Unit Cell Missing Lower Strut.x_b",
 
         # ── Mesh ──────────────────────────────────────────────────────────────
         "element_size": 5e-3,
@@ -61,20 +57,22 @@ if __name__ == "__main__":
         "material_density_kgm3":  1220.0,
 
         # ── Force ─────────────────────────────────────────────────────────────
-        "force_face_id":        744,    # geometry entity ID of middle unit face
-        "force_value_N":        -1.0,
-        "force_direction":      "Z",
-        "force_x_m":            0.015,   # top face centroid X (default)
-        "force_y_m":           -0.015,   # top face centroid Y (default)
-        "force_z_m":            0.0315,  # top face Z
+        "force_face_id":    952,     # top face ID for missing upper strut geometry
+        "force_value_N":   -1.0,
+        "force_direction":  "Z",
+        "force_x_m":        0.015,   # top face centroid X (default)
+        "force_y_m":       -0.015,   # top face centroid Y (default)
+        "force_z_m":        0.0315,  # top face Z
 
         # ── GUI ───────────────────────────────────────────────────────────────
         "show_gui": True,
 
         # ── Output ────────────────────────────────────────────────────────────
-        "output_dir":   r"C:\Users\coetech\Documents\PyMechanical\Single Cell Lattice\Healthy\Sweep",
-        "project_name": "lattice_excitation_sweep",
+        "output_dir":   r"C:\Users\coetech\Documents\PyMechanical\Single Cell Lattice\Missing_Upper_Strut\Sweep",
+        "project_name": "damaged_excitation_sweep",
     }
+
+    os.makedirs(base_config["output_dir"], exist_ok=True)
 
     # ── One-time setup ────────────────────────────────────────────────────────
     mech = setup_session_and_model(base_config)
@@ -95,13 +93,12 @@ if __name__ == "__main__":
         print(f"Excitation location: {label}  (X={fx}, Y={fy}, Z={base_config['force_z_m']})")
         print(f"{'='*60}")
 
-        # Build per-location config
         config = dict(base_config)
-        config["csv_name"]      = f"healthy_{label}_complex.csv"
-        config["imag_csv_name"] = f"healthy_{label}_imag_apdl"
-        config["real_csv_name"] = f"healthy_{label}_real.csv"
-        config["force_x_m"] = fx if fx is not None else base_config["force_x_m"]
-        config["force_y_m"] = fy if fy is not None else base_config["force_y_m"]
+        config["csv_name"]      = f"damaged_{label}_complex.csv"
+        config["imag_csv_name"] = f"damaged_{label}_imag_apdl"
+        config["real_csv_name"] = f"damaged_{label}_real.csv"
+        config["force_x_m"]    = fx
+        config["force_y_m"]    = fy
 
         # Skip if already completed
         complex_csv = os.path.join(config["output_dir"], config["csv_name"])
