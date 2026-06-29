@@ -18,7 +18,7 @@ import pyuff
 EXCITATION_LABEL = "Center Edge"   # change this for each run — folder name and filename
 
 BASE_DIR  = r"C:\Users\coetech\Documents\Ansys Mechanical\Excitation Location"
-SIM_FILE  = rf"{BASE_DIR}\{EXCITATION_LABEL}\FRF\FRF249N.xls"
+SIM_FILE  = rf"{BASE_DIR}\{EXCITATION_LABEL}\FRF\TestFRF100.xls"
 EXP_FILE  = r"C:\Users\coetech\OneDrive - Texas A&M University\Research\PolyTech PSV\BigLatticeHammerCenterEdge052726.unv"
 OUT_DIR   = rf"{BASE_DIR}\{EXCITATION_LABEL}\ScreenShots"
 OUT_FILE  = rf"{OUT_DIR}\PSV_vs_Sim_{EXCITATION_LABEL}.png"
@@ -94,28 +94,42 @@ exp_amp  = exp['amplitude'].values
 exp_real = exp['real'].values
 exp_imag = exp['imag'].values
 
+# Simulation force is 1.0 N — divide displacement (mm) by force (N) → mm/N
+FORCE_N = 1.0
+sim_frf = sim_amp / FORCE_N          # mm/N  (same values, correct units)
+
 # Normalize to own maximum within the trimmed window
 sim_amp_norm = sim_amp / sim_amp.max()
 exp_amp_norm = exp_amp / exp_amp.max()
 
 
 # ── Plot ──────────────────────────────────────────────────────────────────────
-fig, axes = plt.subplots(1, 1, figsize=(11, 5))
-axes = [axes]
+fig, axes = plt.subplots(1, 2, figsize=(16, 5))
 fig.suptitle("Lattice Z Direction: Simulation vs PSV Experiment", fontsize=13)
 
-# Amplitude
+# Left — normalized (shape comparison)
 axes[0].semilogy(sim_freq, sim_amp_norm, color='steelblue', linewidth=1.5,
                  label='Simulation (Mechanical)')
 axes[0].semilogy(exp_freq, exp_amp_norm, color='darkorange', linewidth=1.2,
                  label='Experiment (PSV)')
 axes[0].set_xlim(FREQ_MIN, FREQ_MAX)
 axes[0].set_ylabel("Normalized Amplitude (log)")
-axes[0].set_title("Magnitude")
+axes[0].set_title("Shape Comparison (normalized)")
 axes[0].legend()
 axes[0].grid(True, which='both', alpha=0.3)
-
 axes[0].set_xlabel("Frequency (Hz)")
+
+# Right — absolute FRF in mm/N (apples-to-apples)
+axes[1].semilogy(sim_freq, sim_frf,       color='steelblue', linewidth=1.5,
+                 label='Simulation (mm/N)')
+axes[1].semilogy(exp_freq, exp_amp,       color='darkorange', linewidth=1.2,
+                 label='Experiment PSV (mm/N)')
+axes[1].set_xlim(FREQ_MIN, FREQ_MAX)
+axes[1].set_ylabel("|H(ω)|  (mm/N, log)")
+axes[1].set_title("Absolute FRF (mm/N)")
+axes[1].legend()
+axes[1].grid(True, which='both', alpha=0.3)
+axes[1].set_xlabel("Frequency (Hz)")
 
 plt.tight_layout()
 plt.savefig(OUT_FILE, dpi=150)

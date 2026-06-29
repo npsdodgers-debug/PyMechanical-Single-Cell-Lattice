@@ -1381,40 +1381,23 @@ result
 # Damage simulation helpers
 # =============================================================================
 
-def apply_damage_apdl(config, mechanical):
+def _build_damage_material_xml(damage_severity, out_dir, mat_label):
     """
-    Simulate damage by:
-      1. Exporting Structural Steel XML from Mechanical (guaranteed correct format)
-      2. Modifying name and Young's modulus in Python, then saving as DamageMaterial.xml
-      3. Creating a Named Selection of damage zone elements via GenerationCriteria worksheet
-      4. Importing DamageMaterial and assigning it to the Named Selection
+    Build a custom material XML with Young's modulus (and derived K, G)
+    reduced by damage_severity, using Structural Steel from the official
+    Ansys material library as a template (guarantees correct import format).
 
-    Config keys:
-      - damage_location_frac: center of damage as fraction of beam length (e.g. 0.75)
-      - damage_zone_frac:     width of damage zone as fraction of beam length (e.g. 0.05)
-      - damage_severity:      fraction of E to REMOVE (e.g. 0.25 = 25% reduction)
+    Returns (xml_path, E_reduced, K_reduced, G_reduced).
     """
     import os
-
-    damage_location_frac = float(config.get("damage_location_frac", 0.75))
-    damage_zone_frac     = float(config.get("damage_zone_frac", 0.05))
-    damage_severity      = float(config.get("damage_severity", 0.25))
+    import xml.etree.ElementTree as ET
 
     E_original = 200e9
     E_reduced  = E_original * (1.0 - damage_severity)
     nu         = 0.3
     K_reduced  = E_reduced / (3.0 * (1.0 - 2.0 * nu))
     G_reduced  = E_reduced / (2.0 * (1.0 + nu))
-    out_dir    = config.get("output_dir", r"C:\Users\coetech\Documents\PyMechanical\Outputs")
-
-    # Use a unique material name per run to avoid "Unable to import" errors
-    # when Mechanical already has a DamageMaterial from a previous run.
-    mat_label  = f"DamageMaterial_loc{int(damage_location_frac*100):03d}_sev{int(damage_severity*100):03d}"
     xml_path   = os.path.join(out_dir, f"{mat_label}.xml")
-
-    # ── Build DamageMaterial XML by extracting Structural Steel from the
-    #    official Ansys material library (guarantees correct import format) ────
-    import xml.etree.ElementTree as ET
 
     lib_path = _find_material_library()
     lib_tree = ET.parse(lib_path)
@@ -1467,9 +1450,36 @@ def apply_damage_apdl(config, mechanical):
     ET.indent(new_root, space="  ")
     new_tree = ET.ElementTree(new_root)
     new_tree.write(xml_path, encoding="unicode", xml_declaration=True)
-    print(f"DamageMaterial XML written: E={E_reduced:.3e} Pa, K={K_reduced:.3e} Pa, G={G_reduced:.3e} Pa")
+    print(f"Damage material XML written: E={E_reduced:.3e} Pa, K={K_reduced:.3e} Pa, G={G_reduced:.3e} Pa")
 
-    # ── Step 3 & 4: Create NS, import material, assign ───────────────────────
+    return xml_path, E_reduced, K_reduced, G_reduced
+
+
+def apply_damage_apdl(config, mechanical):
+    """
+    Simulate damage by:
+      1. Building a reduced-stiffness material from the Ansys material library
+      2. Creating a Named Selection of damage zone elements via GenerationCriteria worksheet
+      3. Importing the damage material and assigning it to the Named Selection
+
+    Config keys:
+      - damage_location_frac: center of damage as fraction of beam length (e.g. 0.75)
+      - damage_zone_frac:     width of damage zone as fraction of beam length (e.g. 0.05)
+      - damage_severity:      fraction of E to REMOVE (e.g. 0.25 = 25% reduction)
+    """
+    damage_location_frac = float(config.get("damage_location_frac", 0.75))
+    damage_zone_frac     = float(config.get("damage_zone_frac", 0.05))
+    damage_severity      = float(config.get("damage_severity", 0.25))
+    out_dir    = config.get("output_dir", r"C:\Users\coetech\Documents\PyMechanical\Outputs")
+
+    # Use a unique material name per run to avoid "Unable to import" errors
+    # when Mechanical already has a DamageMaterial from a previous run.
+    mat_label = f"DamageMaterial_loc{int(damage_location_frac*100):03d}_sev{int(damage_severity*100):03d}"
+    xml_path, E_reduced, K_reduced, G_reduced = _build_damage_material_xml(
+        damage_severity, out_dir, mat_label
+    )
+
+    # ── Create NS, import material, assign ────────────────────────────────────
     script = f"""
 import json
 from Ansys.Mechanical.DataModel.Enums import (
@@ -1577,6 +1587,71 @@ result
 """
     out = mechanical.run_python_script(script)
     print("Mechanical says (remove damage):", out)
+
+
+def apply_damage_to_strut(config, mechanical):
+    """
+    Reduce the stiffness of a single strut (one geometry body) to simulate
+    partial damage, instead of removing the strut entirely.
+
+    Config keys:
+      - strut_geometry_id: int  — Mechanical geometry entity ID of the target strut body
+      - damage_severity:   float — fraction of E to REMOVE (e.g. 0.25 = 25% reduction)
+    """
+    strut_geometry_id = int(config["strut_geometry_id"])
+    damage_severity    = float(config.get("damage_severity", 0.25))
+    out_dir            = config.get("output_dir", r"C:\Users\coetech\Documents\PyMechanical\Outputs")
+
+    mat_label = f"StrutDamageMaterial_id{strut_geometry_id}_sev{int(damage_severity*100):03d}"
+    xml_path, E_reduced, K_reduced, G_reduced = _build_damage_material_xml(
+        damage_severity, out_dir, mat_label
+    )
+
+    script = f"""
+from Ansys.Mechanical.DataModel.Enums import DataModelObjectCategory, SelectionTypeEnum
+
+existing_mas = Model.Materials.GetChildren(DataModelObjectCategory.MaterialAssignment, True)
+for ma in list(existing_mas):
+    if ma.Name == "StrutDamageMaterialAssignment":
+        ma.Delete()
+
+Model.Materials.Import(r"{xml_path}")
+
+selection = ExtAPI.SelectionManager.CreateSelectionInfo(SelectionTypeEnum.GeometryEntities)
+selection.Ids = [{strut_geometry_id}]
+
+mat_assign = Model.Materials.AddMaterialAssignment()
+mat_assign.Name = "StrutDamageMaterialAssignment"
+mat_assign.Location = selection
+mat_assign.Material = "{mat_label}"
+
+result = "OK: strut {strut_geometry_id} assigned material '{mat_label}'"
+result
+"""
+    out = mechanical.run_python_script(script)
+    print("Mechanical says (strut damage):", out)
+    return {
+        "strut_geometry_id": strut_geometry_id,
+        "material_name":     mat_label,
+        "damage_severity":   damage_severity,
+        "E_reduced_Pa":      E_reduced,
+    }
+
+
+def remove_strut_damage(mechanical):
+    """Remove the StrutDamageMaterialAssignment, reverting the strut to the base material."""
+    script = """
+from Ansys.Mechanical.DataModel.Enums import DataModelObjectCategory
+existing_mas = Model.Materials.GetChildren(DataModelObjectCategory.MaterialAssignment, True)
+for ma in list(existing_mas):
+    if ma.Name == "StrutDamageMaterialAssignment":
+        ma.Delete()
+
+result = "OK: strut damage assignment removed"
+result
+"""
+    out = mechanical.run_python_script(script)
+    print("Mechanical says (remove strut damage):", out)
 
 
 def append_to_dataset(config, temp_csv_name, dataset_csv_path, damage_location_mm, damage_severity, label):
