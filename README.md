@@ -15,6 +15,7 @@ simulation/
 plotting/
     plot_lattice_frf.py      — plots FRF from Mechanical probe export (.xls)
     compare_lattice_psv.py   — compares Mechanical simulation vs Polytec PSV experiment
+    compare_two_psv.py       — compares two Polytec PSV experimental FRFs against each other
 ```
 
 ## Requirements
